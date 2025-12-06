@@ -112,19 +112,24 @@ class SpeechService {
         
         // Upload and transcribe using AssemblyAI with retry logic
         // Note: WebM chunks from MediaRecorder might not always form valid files
-        // We'll retry on transcoding errors
+        // We'll retry on transcoding errors and network failures
         let finalTranscript = null;
         let retryCount = 0;
-        const maxRetries = 2;
+        const maxRetries = 3; // Increased retries for network issues
         
         while (retryCount <= maxRetries) {
           try {
             // AssemblyAI SDK requires a file path or URL, not a buffer directly
             // So we use the temp file we created
-            const transcript = await client.transcripts.transcribe({
-              audio: tempFile,
-              ...config
-            });
+            const transcript = await Promise.race([
+              client.transcripts.transcribe({
+                audio: tempFile,
+                ...config
+              }),
+              new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Upload timeout after 30 seconds')), 30000)
+              )
+            ]);
 
             // Wait for transcription to complete (poll if needed)
             finalTranscript = transcript;
@@ -134,9 +139,22 @@ class SpeechService {
             while ((finalTranscript.status === 'queued' || finalTranscript.status === 'processing') && pollCount < maxPolls) {
               await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
               try {
-                finalTranscript = await client.transcripts.get(finalTranscript.id);
+                finalTranscript = await Promise.race([
+                  client.transcripts.get(finalTranscript.id),
+                  new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Polling timeout')), 5000)
+                  )
+                ]);
                 pollCount++;
               } catch (pollError) {
+                // If it's a network error, retry polling
+                if (pollError.message && (pollError.message.includes('fetch failed') || pollError.message.includes('timeout'))) {
+                  if (pollCount < maxPolls - 5) { // Allow a few retries for polling
+                    console.log(`⚠️ Network error while polling, retrying... (poll attempt ${pollCount + 1})`);
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    continue;
+                  }
+                }
                 console.error('Error polling transcript:', pollError.message);
                 throw pollError;
               }
@@ -163,13 +181,30 @@ class SpeechService {
             // Success - break out of retry loop
             break;
           } catch (error) {
+            const errorMessage = error.message || error.toString();
+            const isNetworkError = errorMessage.includes('fetch failed') || 
+                                   errorMessage.includes('timeout') ||
+                                   errorMessage.includes('ECONNREFUSED') ||
+                                   errorMessage.includes('ENOTFOUND') ||
+                                   errorMessage.includes('network');
+            
+            // If it's a network error and we haven't retried enough, try again
+            if (isNetworkError && retryCount < maxRetries) {
+              const waitTime = Math.min(2000 * (retryCount + 1), 10000); // Exponential backoff, max 10s
+              console.log(`⚠️ Network error (${errorMessage}), retrying in ${waitTime}ms... (attempt ${retryCount + 1}/${maxRetries + 1})`);
+              retryCount++;
+              await new Promise(resolve => setTimeout(resolve, waitTime));
+              continue;
+            }
+            
             // If it's a transcoding error and we haven't retried, try again
-            if (error.message && error.message.includes('Transcoding failed') && retryCount < maxRetries) {
+            if (errorMessage.includes('Transcoding failed') && retryCount < maxRetries) {
               console.log(`⚠️ Transcoding error, retrying... (attempt ${retryCount + 1}/${maxRetries + 1})`);
               retryCount++;
               await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds before retry
               continue;
             }
+            
             // Otherwise, throw the error
             throw error;
           }
@@ -213,7 +248,16 @@ class SpeechService {
         throw fileError;
       }
     } catch (error) {
-      console.error('AssemblyAI transcription error:', error.message);
+      const errorMessage = error.message || error.toString();
+      const isNetworkError = errorMessage.includes('fetch failed') || 
+                             errorMessage.includes('timeout') ||
+                             errorMessage.includes('ECONNREFUSED') ||
+                             errorMessage.includes('ENOTFOUND') ||
+                             errorMessage.includes('network') ||
+                             (error.cause && (error.cause.message?.includes('fetch failed') || error.cause.message?.includes('timeout')));
+      
+      console.error('AssemblyAI transcription error:', errorMessage);
+      
       // Log more details for debugging
       if (error.response) {
         console.error('API Response Status:', error.response.status);
@@ -222,18 +266,29 @@ class SpeechService {
       if (error.status) {
         console.error('Error Status:', error.status);
       }
+      if (error.cause) {
+        console.error('Caused by:', error.cause.message);
+        if (error.cause.stack) {
+          const stackLines = error.cause.stack.split('\n').slice(0, 3);
+          stackLines.forEach(line => console.error(line));
+        }
+      }
       if (error.stack) {
         const stackLines = error.stack.split('\n').slice(0, 6);
         stackLines.forEach(line => console.error(line));
       }
+      
       // Provide more specific error message
-      let errorMessage = 'Speech-to-Text transcription failed';
-      if (error.message) {
-        errorMessage = error.message;
+      let finalErrorMessage = 'Speech-to-Text transcription failed';
+      if (isNetworkError) {
+        finalErrorMessage = 'Network error: Unable to connect to AssemblyAI. Please check your internet connection and try again.';
+      } else if (error.message) {
+        finalErrorMessage = error.message;
       } else if (error.response?.data?.error) {
-        errorMessage = error.response.data.error;
+        finalErrorMessage = error.response.data.error;
       }
-      throw new Error(errorMessage);
+      
+      throw new Error(finalErrorMessage);
     }
   }
 
