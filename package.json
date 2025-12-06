@@ -1,0 +1,30 @@
+{
+  "name": "healthcare-translation-backend",
+  "version": "1.0.0",
+  "description": "Backend API for Healthcare Translation App",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "healthcare",
+    "translation",
+    "ai"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@google-cloud/speech": "^7.2.1",
+    "@google/generative-ai": "^0.2.1",
+    "assemblyai": "^4.19.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
