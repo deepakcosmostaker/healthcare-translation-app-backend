@@ -18,16 +18,29 @@ dotenv.config({ path: join(__dirname, '..', '.env') });
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// CORS configuration
 const allowedOrigins = process.env.CORS_ORIGIN 
-  ? process.env.CORS_ORIGIN.split(',')
+  ? process.env.CORS_ORIGIN.split(',').map(origin => origin.trim())
   : process.env.NODE_ENV === 'production'
-    ? []
+    ? [] // In production, require CORS_ORIGIN to be set
     : ['http://localhost:3000', /^http:\/\/192\.168\.\d+\.\d+:3000$/, /^http:\/\/10\.\d+\.\d+\.\d+:3000$/];
+
+// Add Render frontend domains if in production
+if (process.env.NODE_ENV === 'production') {
+  // Allow Render frontend domains (common patterns)
+  allowedOrigins.push(/^https:\/\/.*\.onrender\.com$/);
+  allowedOrigins.push(/^https:\/\/.*\.vercel\.app$/);
+  allowedOrigins.push(/^https:\/\/.*\.netlify\.app$/);
+}
 
 app.use(cors({
   origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
+    // Allow requests with no origin (like mobile apps, Postman, or server-to-server)
+    if (!origin) {
+      return callback(null, true);
+    }
     
+    // Check if origin is in allowed list
     const isAllowed = allowedOrigins.some(allowed => {
       if (typeof allowed === 'string') {
         return origin === allowed;
@@ -37,13 +50,21 @@ app.use(cors({
       return false;
     });
     
-    if (isAllowed || process.env.NODE_ENV !== 'production') {
+    if (isAllowed) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'));
+      // In development, allow all origins for easier testing
+      if (process.env.NODE_ENV !== 'production') {
+        callback(null, true);
+      } else {
+        console.warn(`CORS blocked origin: ${origin}`);
+        callback(new Error('Not allowed by CORS'));
+      }
     }
   },
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 app.use(express.json({ limit: '10mb' }));
@@ -51,6 +72,20 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 app.use(logRequest);
 app.use(validateRequest);
+
+// Root route
+app.get('/', (req, res) => {
+  res.json({
+    message: 'Healthcare Translation API',
+    version: '1.0.0',
+    endpoints: {
+      health: '/health',
+      translate: '/api/translate',
+      enhance: '/api/translate/enhance',
+      transcribe: '/api/speech/transcribe'
+    }
+  });
+});
 
 app.get('/health', healthController.healthCheck);
 app.use('/api/translate', translationRoutes);
