@@ -1,4 +1,3 @@
-// Translation service using Google Gemini API
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 class TranslationService {
@@ -7,15 +6,12 @@ class TranslationService {
     this.model = null;
   }
 
-  // Lazy initialization - get model when needed
   getModel() {
     if (!this.model) {
       if (!process.env.GEMINI_API_KEY) {
         throw new Error('Gemini API key not configured. Please set GEMINI_API_KEY in your .env file.');
       }
       this.genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-      // Using gemini-2.0-flash-001 (stable, fast model for translation)
-      // Alternative: 'models/gemini-2.5-flash' or 'models/gemini-2.5-pro' for better quality
       this.model = this.genAI.getGenerativeModel({ model: 'models/gemini-2.0-flash-001' });
     }
     return this.model;
@@ -32,6 +28,7 @@ class TranslationService {
       // Get language names for better context
       const languageNames = {
         en: 'English',
+        hi: 'Hindi',
         es: 'Spanish',
         fr: 'French',
         de: 'German',
@@ -41,14 +38,12 @@ class TranslationService {
         ja: 'Japanese',
         ko: 'Korean',
         ar: 'Arabic',
-        hi: 'Hindi',
         ru: 'Russian',
       };
 
       const sourceLangName = languageNames[sourceLanguage] || sourceLanguage;
       const targetLangName = languageNames[targetLanguage] || targetLanguage;
 
-      // Enhanced prompt for healthcare context
       const prompt = `You are a professional medical translator. Translate the following text from ${sourceLangName} to ${targetLangName}. 
       
 Important guidelines:
@@ -69,16 +64,10 @@ Translation:`;
       
       return translatedText;
     } catch (error) {
-      // Log detailed error to console with limited stack trace
       console.error('Translation error:', error.message);
       if (error.cause) {
         console.error('Caused by:', error.cause.message);
       }
-      if (error.stack) {
-        const stackLines = error.stack.split('\n').slice(0, 4);
-        stackLines.forEach(line => console.error(line));
-      }
-      // Throw simple error message
       throw new Error('Translation failed');
     }
   }
@@ -87,17 +76,22 @@ Translation:`;
     try {
       const model = this.getModel();
 
-      const prompt = `You are a medical transcription specialist. Review and correct any medical terminology in this transcript. 
+      const prompt = `You are a medical transcription specialist. Your task is to review the following transcript and correct ONLY medical terminology, drug names, anatomical terms, and medical abbreviations.
 
-Important:
-- Correct spelling of medical terms
-- Ensure proper medical terminology is used
-- Maintain the original meaning
-- Only provide the corrected text, no additional explanation
+CRITICAL RULES - FOLLOW STRICTLY:
+1. ONLY correct medical terms, drug names, anatomical terms, and medical abbreviations
+2. DO NOT change sentence structure, grammar, punctuation, or word order
+3. DO NOT change non-medical words - leave them exactly as they are
+4. DO NOT add or remove words
+5. DO NOT rephrase or rewrite sentences
+6. Keep the original meaning and flow exactly the same
+7. If a word is not a medical term, leave it exactly as is
+8. Only fix medical terms that are misspelled or incorrect
+9. Return ONLY the corrected text without any explanations, notes, or additional text
 
 Transcript: "${text}"
 
-Corrected version:`;
+Corrected version (medical terms only, no other changes):`;
 
       const result = await model.generateContent(prompt);
       const response = await result.response;
@@ -105,16 +99,11 @@ Corrected version:`;
       
       return enhancedText || text;
     } catch (error) {
-      // Log detailed error to console with limited stack trace
       console.error('Medical term enhancement error:', error.message);
       if (error.cause) {
         console.error('Caused by:', error.cause.message);
       }
-      if (error.stack) {
-        const stackLines = error.stack.split('\n').slice(0, 4);
-        stackLines.forEach(line => console.error(line));
-      }
-      return text; // Return original on error
+      return text;
     }
   }
 }
